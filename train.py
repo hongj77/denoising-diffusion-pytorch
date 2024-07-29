@@ -12,12 +12,13 @@ if __name__=="__main__":
   print(f"device: {device}")
 
   BATCH_SIZE = 128
-  NUM_TIMESTEPS = 5000
+  NUM_TIMESTEPS = 1000
   NUM_CLASSES = 10
-  NAME = "test"
-  SAVE_MODEL = True
-  SAVE_MODEL_STEP_FREQ = 100
+  NAME = "no_attn"
   SAVE_MODEL_PATH = "./checkpoints"
+  SAVE_MODEL = True
+  PRINT_FREQ = 1000
+  SAVE_FREQ = 100000
   MAX_NUM_STEPS = 800000
 
   model = ConditionalUNet(use_label=True, num_classes=NUM_CLASSES).to(device)
@@ -34,6 +35,7 @@ if __name__=="__main__":
 
   step = 0
   while step < MAX_NUM_STEPS:
+
     losses = []
     for example in train_dataloader:
       if step == MAX_NUM_STEPS:
@@ -55,15 +57,16 @@ if __name__=="__main__":
 
       accelerator.backward(loss)
       optimizer.step()
-      progress_bar.update(1)
-      step += 1
 
-    if step % SAVE_MODEL_STEP_FREQ == 0 or step == 0:
-      print(f"Step: {step} | Loss: {np.mean(losses)}")
-      if SAVE_MODEL:
+      if SAVE_MODEL and step % SAVE_FREQ == 0 or step == 0:
         checkpoint = {
           'step': step,
           'model': model.state_dict(),
           'optimizer': optimizer.state_dict()
         }
         torch.save(checkpoint, f'{SAVE_MODEL_PATH}/{NAME}_{step}_{BATCH_SIZE}_{NUM_TIMESTEPS}_checkpoint.pth')
+      if step % PRINT_FREQ == 0:
+        print(f"Step: {step} | Loss: {np.mean(losses)}")
+
+      progress_bar.update(1)
+      step += 1
