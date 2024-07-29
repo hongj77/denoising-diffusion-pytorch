@@ -2,3 +2,4 @@ src/data/cache
 venv
 *.pyc
 *.pth
+wandb

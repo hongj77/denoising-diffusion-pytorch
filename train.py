@@ -82,7 +82,7 @@ if __name__=="__main__":
       if step % PRINT_FREQ == 0:
         mean_loss = np.mean(losses)
         print(f"Step: {step} | Loss: {mean_loss}")
-        wandb.log({"loss": mean_loss})
+        wandb.log({"loss": mean_loss}, step=step)
         losses = []
 
       progress_bar.update(1)
