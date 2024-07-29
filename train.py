@@ -1,5 +1,6 @@
 import torch
 import numpy as np
+import wandb
 from tqdm.auto import tqdm
 from torch.optim import Adam
 from src.data.cifar_10 import get_dataloader as cifar_dataloader
@@ -11,9 +12,11 @@ if __name__=="__main__":
   device = "cuda" if torch.cuda.is_available() else "cpu"
   print(f"device: {device}")
 
+
   BATCH_SIZE = 128
   NUM_TIMESTEPS = 1000
   NUM_CLASSES = 10
+  LEARNING_RATE = 2e-4
   NAME = "no_attn"
   SAVE_MODEL_PATH = "./checkpoints"
   SAVE_MODEL = True
@@ -21,8 +24,18 @@ if __name__=="__main__":
   SAVE_FREQ = 100000
   MAX_NUM_STEPS = 800000
 
+  wandb.init(
+    project="diffusion-pytorch",
+    config={
+      "learning_rate": LEARNING_RATE,
+      "architecture": "Pixelnet + no attn",
+      "dataset": "CIFAR-10",
+      "max_num_steps": MAX_NUM_STEPS
+    }
+  )
+
   model = ConditionalUNet(use_label=True, num_classes=NUM_CLASSES).to(device)
-  optimizer = Adam(model.parameters(), lr=1e-3)
+  optimizer = Adam(model.parameters(), lr=LEARNING_RATE)
   train_dataloader = cifar_dataloader(BATCH_SIZE, train=True)
 
   accelerator = Accelerator()
@@ -34,12 +47,12 @@ if __name__=="__main__":
   progress_bar = tqdm(range(MAX_NUM_STEPS))
 
   step = 0
+  losses = []
   while step < MAX_NUM_STEPS:
-
-    losses = []
     for example in train_dataloader:
       if step == MAX_NUM_STEPS:
         break
+
       input_batch = example[0].to(device)
       label = example[1].to(device)
 
@@ -65,8 +78,12 @@ if __name__=="__main__":
           'optimizer': optimizer.state_dict()
         }
         torch.save(checkpoint, f'{SAVE_MODEL_PATH}/{NAME}_{step}_{BATCH_SIZE}_{NUM_TIMESTEPS}_checkpoint.pth')
+
       if step % PRINT_FREQ == 0:
-        print(f"Step: {step} | Loss: {np.mean(losses)}")
+        mean_loss = np.mean(losses)
+        print(f"Step: {step} | Loss: {mean_loss}")
+        wandb.log({"loss": mean_loss})
+        losses = []
 
       progress_bar.update(1)
       step += 1
