@@ -11,7 +11,7 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 
 model = ConditionalUNet(use_label=True, num_classes=NUM_CLASSES).to(device)
 
-PATH = "./checkpoints/"
+PATH = "/Users/hongjeon/projects/diffusion-pytorch/checkpoints/no_attn_700000_128_1000_checkpoint.pth"
 model.load_state_dict(torch.load(PATH)['model'], strict=False)
 
 INFERENCE_SIZE = 1
