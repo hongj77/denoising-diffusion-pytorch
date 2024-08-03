@@ -15,7 +15,6 @@ if __name__=="__main__":
   LEARNING_RATE = 2e-4
   NAME = "no_attn"
   SAVE_MODEL_PATH = "./checkpoints"
-  SAVE_MODEL = True
   PRINT_FREQ = 1000
   SAVE_FREQ = 100000
   MAX_NUM_STEPS = 800000
@@ -76,9 +75,9 @@ if __name__=="__main__":
       progress_bar.update(1)
       step += 1
 
-      if SAVE_MODEL and step % SAVE_FREQ == 0 or step == 1:
+      if step % SAVE_FREQ == 0 or step == 1:
         output_dir = f'{SAVE_MODEL_PATH}/{NAME}_{step}_{BATCH_SIZE}_{NUM_TIMESTEPS}'
         accelerator.save_state(output_dir)
 
-      if step == MAX_NUM_STEPS:
+      if step >= MAX_NUM_STEPS:
         break
