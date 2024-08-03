@@ -17,6 +17,36 @@ class SinusoidalPositionEmbeddings(nn.Module):
       embeddings = torch.cat((embeddings.sin(), embeddings.cos()), dim=-1)
       return embeddings
 
+class SelfAttention(nn.Module):
+  def __init__(self, in_channels, key_dim):
+    super().__init__()
+    self.query_proj = nn.Conv2d(in_channels, key_dim, 1)
+    self.key_proj = nn.Conv2d(in_channels, key_dim, 1)
+    # Keep the same number of channels as the image.
+    self.value_proj = nn.Conv2d(in_channels, in_channels, 1)
+
+  def forward(self, x):
+    B, _, H, W = x.shape
+
+    # Shape: [B, N, key_dim]
+    query = self.query_proj(x).reshape([B, H*W, -1])
+
+    # Shape: [B, N, key_dim]
+    key = self.key_proj(x).reshape([B, H*W, -1])
+
+    # Shape: [B, C, N]
+    value = self.value_proj(x).reshape([B, -1, H*W])
+
+    # Shape: [B, N, N]
+    attn = query @ key.permute(0,2,1)
+
+    # Shape: [B, C, N]
+    out = value @ attn
+    out = einops.rearrange(out, 'b c (h w) -> b c h w', h=H, w=W)
+
+    return out + x
+
+
 class ConditionalUNetBlock(nn.Module):
   """
   Conv (3x3) - preserve size
@@ -30,13 +60,16 @@ class ConditionalUNetBlock(nn.Module):
   Conv 1 preserves the size. img features extracted. Other features concatted.
   Conv 2 either scales 2x or 1/2x
   """
-  def __init__(self, in_channels, out_channels, time_embedding_dim, downsize=False, use_label=False, num_classes=None):
+  def __init__(self, in_channels, out_channels, time_embedding_dim, downsize=False, use_label=False, num_classes=None, use_attention=True):
     super().__init__()
 
     self.time_embedding = SinusoidalPositionEmbeddings(dim=time_embedding_dim)
     self.time_mlp = nn.Linear(time_embedding_dim, out_channels)
     self.use_label = use_label
     self.num_classes = num_classes
+
+    self.use_attention = use_attention
+    self.attn = SelfAttention(in_channels=out_channels, key_dim=out_channels//8)
 
     # Conv1 preserves the size.
     if downsize:
@@ -46,6 +79,8 @@ class ConditionalUNetBlock(nn.Module):
       self.conv1 = nn.Conv2d(2*in_channels, out_channels, kernel_size=3, stride=1, padding=1)
 
     self.relu = nn.ReLU()
+    # TODO: replace this with GroupNorm.
+    # https://pytorch.org/docs/stable/generated/torch.nn.GroupNorm.html
     self.bn1 = nn.BatchNorm2d(num_features=out_channels)
 
     feature_channels = out_channels
@@ -90,6 +125,9 @@ class ConditionalUNetBlock(nn.Module):
       # output = torch.cat([output, label], dim=1)
       output = output + label_output
 
+    if self.use_attention:    
+      output = self.attn(output)
+
     output = self.bn2(self.relu(self.conv2(output)))
     return self.final(output)
 
@@ -98,7 +136,7 @@ class ConditionalUNet(nn.Module):
   Original U-Net architecture: https://arxiv.org/pdf/1505.04597.
   Modified to add conditional timestep and label on each block.
   """
-  def __init__(self, use_label=False, num_classes=None):
+  def __init__(self, use_label=False, num_classes=None, use_attention=True):
     super().__init__()
     # 4 Down, 4 Up
     self.channels = [64, 128, 256, 512, 1024]
@@ -109,13 +147,13 @@ class ConditionalUNet(nn.Module):
 
     self.down_blocks = []
     for i in range(4):
-      self.down_blocks.append(ConditionalUNetBlock(self.channels[i], self.channels[i+1], self.time_embedding_dim, downsize=True, use_label=self.use_label, num_classes=num_classes))
+      self.down_blocks.append(ConditionalUNetBlock(self.channels[i], self.channels[i+1], self.time_embedding_dim, downsize=True, use_label=self.use_label, num_classes=num_classes, use_attention=(use_attention and i==1)))
     self.down_blocks = nn.ModuleList(self.down_blocks)
 
     self.up_blocks = []
     for i in range(4):
       channel_reversed = list(reversed(self.channels))
-      self.up_blocks.append(ConditionalUNetBlock(channel_reversed[i], channel_reversed[i+1], self.time_embedding_dim, downsize=False, use_label=self.use_label, num_classes=num_classes))
+      self.up_blocks.append(ConditionalUNetBlock(channel_reversed[i], channel_reversed[i+1], self.time_embedding_dim, downsize=False, use_label=self.use_label, num_classes=num_classes, use_attention=(use_attention and i==1)))
     self.up_blocks = nn.ModuleList(self.up_blocks)
 
     image_channels = 3
