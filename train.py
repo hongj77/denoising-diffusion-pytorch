@@ -13,7 +13,7 @@ if __name__=="__main__":
   NUM_TIMESTEPS = 1000
   NUM_CLASSES = 10
   LEARNING_RATE = 2e-4
-  NAME = "no_attn"
+  NAME = "full"
   SAVE_MODEL_PATH = "./checkpoints"
   PRINT_FREQ = 1000
   SAVE_FREQ = 100000
@@ -77,7 +77,12 @@ if __name__=="__main__":
 
       if step % SAVE_FREQ == 0 or step == 1:
         output_dir = f'{SAVE_MODEL_PATH}/{NAME}_{step}_{BATCH_SIZE}_{NUM_TIMESTEPS}'
-        accelerator.save_state(output_dir)
+        checkpoint = dict(
+            model_state_dict = accelerator.unwrap_model(model).state_dict(),
+            optimizer_state_dict = accelerator.unwrap_model(optimizer).state_dict(),
+            step = step
+        )
+        accelerator.save(checkpoint, output_dir)
 
       if step >= MAX_NUM_STEPS:
         break
