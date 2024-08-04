@@ -1,4 +1,5 @@
 import torch
+import einops
 
 def linear_beta_schedule(num_steps: int) -> torch.tensor:
     """The noise schedule determines how the variance changes at each step.
@@ -9,6 +10,7 @@ def linear_beta_schedule(num_steps: int) -> torch.tensor:
     beta_start = 0.0001
     beta_end = 0.02
     return torch.linspace(beta_start, beta_end, num_steps)
+    
 
 def sample_x_t(x0: torch.tensor, noise: torch.tensor, t: torch.tensor, betas: torch.tensor) -> torch.tensor:
   """Return sample from a normal distribution for the forward process.
@@ -43,16 +45,6 @@ def sample_x_t(x0: torch.tensor, noise: torch.tensor, t: torch.tensor, betas: to
 
   return x_t_sample
 
-  #@title backward process
-import einops
-
-def gather_and_reshape(tensor, indices, out_shape):
-  """
-  Convenience function to index into tensor with indices then reshape to out_shape.
-  """
-  gathered = tensor.gather(dim=0, index=indices.cpu())
-  gathered = gathered.view(out_shape).to(tensor.device)
-  return gathered
 
 def sample_body(model, x, step, betas, alpha_bar, label):
   """
@@ -62,8 +54,8 @@ def sample_body(model, x, step, betas, alpha_bar, label):
   out_shape = (batch_size, 1,1,1)
 
   # Index into each of these tensors with our `step` but we need the output result to have shape (b,1,1,1)
-  alpha_bar_t = gather_and_reshape(alpha_bar, step, out_shape)
-  betas_t = gather_and_reshape(betas, step, out_shape)
+  alpha_bar_t = einops.rearrange(alpha_bar.gather(dim=0, index=step), 'b -> b 1 1 1')
+  betas_t = einops.rearrange(betas.gather(dim=0, index=step), 'b -> b 1 1 1') 
   alphas_t = 1-betas_t
 
   mean = (x - (betas_t / torch.sqrt(1-alpha_bar_t)) * model(x, step, label)) / torch.sqrt(alphas_t)
@@ -73,22 +65,21 @@ def sample_body(model, x, step, betas, alpha_bar, label):
 
   variance = betas_t
   noise = torch.randn_like(x)
+  # x_t_sample = mean * x0 + std * noise
   return mean + torch.sqrt(variance)*noise
 
-  # x_t_sample = mean * x0 + std * noise
-  return x
 
 @torch.no_grad()
-def sample_images(model, num_steps, batch_size, img_size, num_channels, label):
+def sample_images(model, num_steps, batch_size, img_size, num_channels, label, device):
   # Start with pure gaussian noise.
-  x = torch.randn((batch_size, num_channels, img_size, img_size), device=model.device)
-  betas = linear_beta_schedule(num_steps)
+  x = torch.randn((batch_size, num_channels, img_size, img_size), device=device)
+  betas = linear_beta_schedule(num_steps).to(device)
   alphas = 1-betas
   alpha_bar = torch.cumprod(alphas, dim=0)
   # Denoise loop for T steps.
   intermediate_steps = []
   for step in reversed(range(0, num_steps)):
-    step_repeated = einops.repeat(torch.tensor(step), '-> b', b=batch_size).to(model.device)
+    step_repeated = einops.repeat(torch.tensor(step), '-> b', b=batch_size).to(device)
     x = sample_body(model, x, step_repeated, betas, alpha_bar, label)
     intermediate_steps.append(x.cpu())
   return intermediate_steps

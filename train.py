@@ -5,25 +5,29 @@ from tqdm.auto import tqdm
 from torch.optim import Adam
 from src.data.cifar_10 import get_dataloader as cifar_dataloader
 from src.model.unet import ConditionalUNet
-from src.diffusion_utils import linear_beta_schedule, sample_x_t
+from src.diffusion_utils import linear_beta_schedule, sample_x_t, sample_images
+from src.data.transform_utils import postprocess
 from accelerate import Accelerator
 
 if __name__=="__main__":
-  BATCH_SIZE = 128
-  NUM_TIMESTEPS = 1000
-  NUM_CLASSES = 10
-  LEARNING_RATE = 2e-4
   NAME = "full"
   SAVE_MODEL_PATH = "./checkpoints"
-  PRINT_FREQ = 1000
-  SAVE_FREQ = 100000
+  BATCH_SIZE = 128
+  LEARNING_RATE = 2e-4
+  NUM_TIMESTEPS = 1000
+  NUM_CLASSES = 10
   MAX_NUM_STEPS = 800000
+  SAVE_FREQ = 100000
+  PRINT_FREQ = 1000
+  EVAL_FREQ = 100000
+  INFERENCE_BATCH_SIZE = 8
+  IMAGE_SIZE = 32
 
   wandb.init(
     project="diffusion-pytorch",
     config={
       "learning_rate": LEARNING_RATE,
-      "architecture": "Pixelnet + no attn",
+      "architecture": "Pixelnet",
       "dataset": "CIFAR-10",
       "max_num_steps": MAX_NUM_STEPS
     }
@@ -36,10 +40,11 @@ if __name__=="__main__":
   model = ConditionalUNet(use_label=True, num_classes=NUM_CLASSES).to(device)
   optimizer = Adam(model.parameters(), lr=LEARNING_RATE)
   train_dataloader = cifar_dataloader(BATCH_SIZE, train=True)
+  eval_dataloader = cifar_dataloader(BATCH_SIZE, train=False)
 
 
-  train_dataloader, model, optimizer = accelerator.prepare(
-    train_dataloader, model, optimizer
+  train_dataloader, eval_dataloader, model, optimizer = accelerator.prepare(
+    train_dataloader, eval_dataloader, model, optimizer
   )
 
   progress_bar = tqdm(range(MAX_NUM_STEPS))
@@ -75,7 +80,7 @@ if __name__=="__main__":
       progress_bar.update(1)
       step += 1
 
-      if step % SAVE_FREQ == 0 or step == 1:
+      if step % SAVE_FREQ == 0:
         output_dir = f'{SAVE_MODEL_PATH}/{NAME}_{step}_{BATCH_SIZE}_{NUM_TIMESTEPS}'
         checkpoint = dict(
             model_state_dict = accelerator.unwrap_model(model).state_dict(),
@@ -83,6 +88,36 @@ if __name__=="__main__":
             step = step
         )
         accelerator.save(checkpoint, output_dir)
+      
+      if step % EVAL_FREQ == 0:
+        with torch.no_grad():
+          eval_losses = []
+          for eval_example in tqdm(eval_dataloader):
+            input_batch = example[0].to(device)
+            label = example[1].to(device)
+            noise = torch.randn_like(input_batch)
+
+            betas = linear_beta_schedule(NUM_TIMESTEPS)
+            t = torch.randint(0, NUM_TIMESTEPS, (BATCH_SIZE,)).long().to(device)
+            x_t = sample_x_t(input_batch, noise, t, betas)
+            pred_noise = model(x_t, t, label)
+
+            loss = torch.nn.functional.mse_loss(noise, pred_noise)
+            eval_losses.append(loss.item())
+
+          if accelerator.is_local_main_process:
+            eval_loss = np.mean(eval_losses)
+            print(f"eval_loss: {eval_loss}")
+            wandb.log({"eval_loss": eval_loss}, step=step)
+            # Visualize one example.
+            labels = torch.randint(0, NUM_CLASSES, [INFERENCE_BATCH_SIZE]).to(device)
+            samples = sample_images(model.eval(), num_steps=NUM_TIMESTEPS, batch_size=INFERENCE_BATCH_SIZE, img_size=IMAGE_SIZE, num_channels=3, label=labels, device=device)
+            # Log the last step of the denoising process.
+            last_step_sample = samples[-1]
+            samples = [postprocess(sample) for sample in last_step_sample]
+            samples = [wandb.Image(sample, caption=f"Class: {label}") for sample, label in zip(samples, labels)] 
+            wandb.log({"samples": samples})
+        model.train()
 
       if step >= MAX_NUM_STEPS:
         break
