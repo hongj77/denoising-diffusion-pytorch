@@ -61,7 +61,7 @@ class ConditionalUNetBlock(nn.Module):
   Conv 1 preserves the size. img features extracted. Other features concatted.
   Conv 2 either scales 2x or 1/2x
   """
-  def __init__(self, in_channels, out_channels, time_embedding_dim, downsize=False, use_label=False, num_classes=None, use_attention=True):
+  def __init__(self, in_channels, out_channels, time_embedding_dim, p_dropout=0.1, downsize=False, use_label=False, num_classes=None, use_attention=True):
     super().__init__()
 
     self.time_embedding = SinusoidalPositionEmbeddings(dim=time_embedding_dim)
@@ -71,6 +71,8 @@ class ConditionalUNetBlock(nn.Module):
 
     self.use_attention = use_attention
     self.attn = SelfAttention(in_channels=out_channels, key_dim=out_channels//8)
+
+    self.dropout = nn.Dropout(p_dropout)
 
     # Conv1 preserves the size.
     if downsize:
@@ -125,6 +127,8 @@ class ConditionalUNetBlock(nn.Module):
       # They add it instead of catting the channels
       # output = torch.cat([output, label], dim=1)
       output = output + label_output
+    
+    output = self.dropout(output)
 
     if self.use_attention:    
       output = self.attn(output)

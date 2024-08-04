@@ -4,3 +4,6 @@ venv
 *.pth
 wandb
 .DS_Store
+*.safetensors
+*.bin
+*.pkl

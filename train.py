@@ -48,15 +48,15 @@ if __name__=="__main__":
   losses = []
   while step < MAX_NUM_STEPS:
     for example in train_dataloader:
-      input_batch = example[0]
-      label = example[1]
+      input_batch = example[0].to(device)
+      label = example[1].to(device)
 
       optimizer.zero_grad()
 
       noise = torch.randn_like(input_batch)
 
       betas = linear_beta_schedule(NUM_TIMESTEPS)
-      t = torch.randint(0, NUM_TIMESTEPS, (BATCH_SIZE,)).long()
+      t = torch.randint(0, NUM_TIMESTEPS, (BATCH_SIZE,)).long().to(device)
       x_t = sample_x_t(input_batch, noise, t, betas)
       pred_noise = model(x_t, t, label)
 

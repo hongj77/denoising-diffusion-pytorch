@@ -6,6 +6,7 @@ def preprocess(example, image_size=32):
   transform = torchvision.transforms.Compose([
     torchvision.transforms.Resize(image_size),
     torchvision.transforms.CenterCrop(image_size),
+    torchvision.transforms.RandomHorizontalFlip(),
     # Transforms PIL image in range [0,255] to pytorch image in range [0,1].
     # Image dimensions go from HWC to CHW.
     # https://pytorch.org/vision/stable/generated/torchvision.transforms.ToTensor.html
