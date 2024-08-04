@@ -1,4 +1,5 @@
 import torch.nn as nn
+import torch.nn.functional as F
 import einops
 import math
 import torch
@@ -38,7 +39,7 @@ class SelfAttention(nn.Module):
     value = self.value_proj(x).reshape([B, -1, H*W])
 
     # Shape: [B, N, N]
-    attn = query @ key.permute(0,2,1)
+    attn = F.softmax(query @ key.permute(0,2,1), dim=-1)
 
     # Shape: [B, C, N]
     out = value @ attn
