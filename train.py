@@ -3,6 +3,7 @@ import numpy as np
 import wandb
 from tqdm.auto import tqdm
 from torch.optim import Adam
+from torch.optim.lr_scheduler import LinearLR
 from src.data.cifar_10 import get_dataloader as cifar_dataloader
 from src.model.unet import ConditionalUNet
 from src.diffusion_utils import linear_beta_schedule, sample_x_t, sample_images
@@ -22,16 +23,11 @@ if __name__=="__main__":
   EVAL_FREQ = 100000
   INFERENCE_BATCH_SIZE = 8
   IMAGE_SIZE = 32
+  WARMUP_STEPS = 5000
+  LOG_WANDB = False
 
-  wandb.init(
-    project="diffusion-pytorch",
-    config={
-      "learning_rate": LEARNING_RATE,
-      "architecture": "Pixelnet",
-      "dataset": "CIFAR-10",
-      "max_num_steps": MAX_NUM_STEPS
-    }
-  )
+  if LOG_WANDB:
+    wandb.init(project="diffusion-pytorch")
 
   accelerator = Accelerator()
   device = accelerator.device
@@ -39,12 +35,13 @@ if __name__=="__main__":
 
   model = ConditionalUNet(use_label=True, num_classes=NUM_CLASSES).to(device)
   optimizer = Adam(model.parameters(), lr=LEARNING_RATE)
+  scheduler = LinearLR(optimizer, start_factor=(1/WARMUP_STEPS), total_iters=WARMUP_STEPS)
   train_dataloader = cifar_dataloader(BATCH_SIZE, train=True)
   eval_dataloader = cifar_dataloader(BATCH_SIZE, train=False)
 
 
-  train_dataloader, eval_dataloader, model, optimizer = accelerator.prepare(
-    train_dataloader, eval_dataloader, model, optimizer
+  train_dataloader, eval_dataloader, model, optimizer, scheduler = accelerator.prepare(
+    train_dataloader, eval_dataloader, model, optimizer, scheduler
   )
 
   progress_bar = tqdm(range(MAX_NUM_STEPS))
@@ -74,7 +71,8 @@ if __name__=="__main__":
       mean_loss = np.mean(losses)
       if step % PRINT_FREQ == 0 and accelerator.is_local_main_process:
         print(f"Step: {step} | Loss: {mean_loss}")
-        wandb.log({"loss": mean_loss}, step=step)
+        if LOG_WANDB:
+          wandb.log({"loss": mean_loss}, step=step)
       losses = []
 
       progress_bar.update(1)
@@ -108,16 +106,18 @@ if __name__=="__main__":
           if accelerator.is_local_main_process:
             eval_loss = np.mean(eval_losses)
             print(f"eval_loss: {eval_loss}")
-            wandb.log({"eval_loss": eval_loss}, step=step)
-            # Visualize one example.
-            labels = torch.randint(0, NUM_CLASSES, [INFERENCE_BATCH_SIZE]).to(device)
-            samples = sample_images(model.eval(), num_steps=NUM_TIMESTEPS, batch_size=INFERENCE_BATCH_SIZE, img_size=IMAGE_SIZE, num_channels=3, label=labels, device=device)
-            # Log the last step of the denoising process.
-            last_step_sample = samples[-1]
-            samples = [postprocess(sample) for sample in last_step_sample]
-            samples = [wandb.Image(sample, caption=f"Class: {label}") for sample, label in zip(samples, labels)] 
-            wandb.log({"samples": samples})
+            if LOG_WANDB:
+              wandb.log({"eval_loss": eval_loss}, step=step)
+              # Visualize one example.
+              labels = torch.randint(0, NUM_CLASSES, [INFERENCE_BATCH_SIZE]).to(device)
+              samples = sample_images(model.eval(), num_steps=NUM_TIMESTEPS, batch_size=INFERENCE_BATCH_SIZE, img_size=IMAGE_SIZE, num_channels=3, label=labels, device=device)
+              # Log the last step of the denoising process.
+              last_step_sample = samples[-1]
+              samples = [postprocess(sample) for sample in last_step_sample]
+              samples = [wandb.Image(sample, caption=f"Class: {label}") for sample, label in zip(samples, labels)] 
+              wandb.log({"samples": samples})
         model.train()
 
       if step >= MAX_NUM_STEPS:
         break
+    scheduler.step()
