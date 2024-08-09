@@ -10,6 +10,8 @@ from src.diffusion_utils import linear_beta_schedule, sample_x_t, sample_images
 from src.data.transform_utils import postprocess
 from accelerate import Accelerator
 
+
+# TODO(hongj77): Write overfitting experiment trainer.
 if __name__=="__main__":
   NAME = "full"
   SAVE_MODEL_PATH = "./checkpoints"
@@ -33,7 +35,7 @@ if __name__=="__main__":
   device = accelerator.device
   print(f"device: {device}")
 
-  model = ConditionalUNet(use_label=True, num_classes=NUM_CLASSES).to(device)
+  model = ConditionalUNet(num_classes=NUM_CLASSES).to(device)
   optimizer = Adam(model.parameters(), lr=LEARNING_RATE)
   scheduler = LinearLR(optimizer, start_factor=(1/WARMUP_STEPS), total_iters=WARMUP_STEPS)
   train_dataloader = cifar_dataloader(BATCH_SIZE, train=True)

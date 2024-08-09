@@ -3,6 +3,7 @@ import torch.nn.functional as F
 import einops
 import math
 import torch
+import pdb
 
 class SinusoidalPositionEmbeddings(nn.Module):
   def __init__(self, dim):
@@ -47,132 +48,159 @@ class SelfAttention(nn.Module):
 
     return out + x
 
-
-class ConditionalUNetBlock(nn.Module):
-  """
-  Conv (3x3) - preserve size
-  BN
-  Relu
-  + <-------- t_embed, label
-  Conv (3x3) - either scale up 2x or 1/2x
-  BN
-  RELU
-
-  Conv 1 preserves the size. img features extracted. Other features concatted.
-  Conv 2 either scales 2x or 1/2x
-  """
-  def __init__(self, in_channels, out_channels, time_embedding_dim, p_dropout=0.1, downsize=False, use_label=False, num_classes=None, use_attention=True):
+class ResnetBlock(nn.Module):
+  """Resnet block with pre-activations from https://arxiv.org/pdf/1603.05027."""
+  def __init__(self, in_channels, out_channels, time_channels, num_classes, num_groups=32, p_dropout=0.1):
     super().__init__()
-
-    self.time_embedding = SinusoidalPositionEmbeddings(dim=time_embedding_dim)
-    self.time_mlp = nn.Linear(time_embedding_dim, out_channels)
-    self.use_label = use_label
+    self.time_channels = time_channels
+    self.out_channels = out_channels
     self.num_classes = num_classes
 
-    self.use_attention = use_attention
-    self.attn = SelfAttention(in_channels=out_channels, key_dim=out_channels//8)
-
+    self.norm1 = nn.GroupNorm(num_groups=num_groups, num_channels=in_channels)
+    self.norm2 = nn.GroupNorm(num_groups=num_groups, num_channels=out_channels)
+    self.act = nn.ReLU()
     self.dropout = nn.Dropout(p_dropout)
 
-    # Conv1 preserves the size.
-    if downsize:
-      self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
-    else:
-      # The residual is concatted, so the number of input channels is doubled.
-      self.conv1 = nn.Conv2d(2*in_channels, out_channels, kernel_size=3, stride=1, padding=1)
+    # Preserves size.
+    self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
+    # Preserves size.
+    self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
+    # Zero initializing output conv layers can help learn the identity function better.
+    nn.init.zeros_(self.conv2.weight)
+    nn.init.zeros_(self.conv2.bias)
+    # Expand channels for x to match the shape of h.
+    self.conv_x = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
 
-    self.relu = nn.ReLU()
-    # TODO: replace this with GroupNorm.
-    # https://pytorch.org/docs/stable/generated/torch.nn.GroupNorm.html
-    self.bn1 = nn.BatchNorm2d(num_features=out_channels)
+    self.time_dense = nn.Linear(time_channels, out_channels)
+    
+    # I'm doing label embedding inside the resnet block unlike the time embedding
+    # because the label would benefit from directly projecting to `out_channels`
+    # which seems easier to do in this class vs. doing it in the unet.
+    self.label_dense1 = nn.Linear(num_classes, out_channels)
+    self.label_dense2 = nn.Linear(out_channels, out_channels)
+    self.label_dense3 = nn.Linear(out_channels, out_channels)
 
-    feature_channels = out_channels
+  def forward(self, x, time_embed, label):
+    B = x.shape[0]
+    assert time_embed.shape == (B, self.time_channels)
+    assert label.shape == (B,)
 
-    self.conv2 = nn.Conv2d(feature_channels, out_channels, kernel_size=3, stride=1, padding=1)
-    self.bn2 = nn.BatchNorm2d(num_features=out_channels)
+    # First convolution.
+    h = self.act(self.norm1(x))
+    h = self.conv1(h)
 
-    self.label_mlp = nn.Linear(num_classes, out_channels)
-
-    # Scale the final output by either 2x or 0.5x.
-    if downsize:
-      self.final = nn.Conv2d(out_channels, out_channels, kernel_size=4, stride=2, padding=1)
-    else:
-      self.final = nn.ConvTranspose2d(out_channels, out_channels, kernel_size=4, stride=2, padding=1)
-
-  def forward(self, x, t, label):
-    """
-      x - shape: [B, C, H, W]
-      t - shape: [b,]
-      label - shape: [b,]4
-    """
-    output = self.bn1(self.relu(self.conv1(x)))
-
-    # Add timestep as a condition.
-    time_embed = self.relu(self.time_mlp(self.time_embedding(t)))
-    time_embed = einops.rearrange(time_embed, 'b c -> b c 1 1')
-    # Time embedding is jsut added because it has the same channels?
-    output = output + time_embed
+    # Add time as a condition.
+    h += einops.rearrange(self.time_dense(self.act(time_embed)), 'b c -> b c 1 1')
 
     # Add label as a condition.
-    if self.use_label:
-      h, w = x.shape[-1], x.shape[-2]
-      # If label is int, then we need to repeat it to fit the image shape.
-      # Add the label as an additional channel.
-      # Can I add one hot encoding?
-      # MLP to turn label 1 channel into output_dims?
-      label_one_hot = nn.functional.one_hot(label, self.num_classes).type(torch.float32)
-      label_output = self.relu(self.label_mlp(label_one_hot))
-      label_output = einops.repeat(label_output, 'b c -> b c h w', h=h, w=w)
-      # MLP+Relu here? return b,c,h,w
-      # They add it instead of catting the channels
-      # output = torch.cat([output, label], dim=1)
-      output = output + label_output
-    
-    output = self.dropout(output)
+    label_one_hot = nn.functional.one_hot(label, self.num_classes).type(torch.float32)
+    label_embed = self.label_dense1(label_one_hot)
+    label_embed = self.label_dense2(self.act(label_embed))
+    label_embed = self.label_dense3(self.act(label_embed))
+    h += einops.rearrange(label_embed, 'b c -> b c 1 1')
 
-    if self.use_attention:    
-      output = self.attn(output)
+    h = self.act(self.norm2(h))
+    h = self.dropout(h)
 
-    output = self.bn2(self.relu(self.conv2(output)))
-    return self.final(output)
+    # Second convolution.
+    h = self.conv2(h)
+    x = self.conv_x(x)
+    assert h.shape == x.shape
+
+    # Output value is a real number. Will need activation function at the beginning of next block.
+    return h + x 
+
+class UpBlock(ResnetBlock):
+  """Residual block where the returning shape is [B, C, H*2, W*2]"""
+  def __init__(self, in_channels, out_channels, time_channels, num_classes, num_groups=32, p_dropout=0.1):
+    super().__init__(in_channels, out_channels, time_channels, num_classes, num_groups, p_dropout)
+    self.upsample = nn.Upsample(scale_factor=2, mode='nearest')
+    self.conv = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
+
+  def forward(self, x, time_embed, label):
+    B, C, H, W = x.shape
+    h = super().forward(x, time_embed, label)
+    # Double the output size.
+    h = self.upsample(h)
+    h = self.conv(h)
+    assert h.shape == (B, self.out_channels, H*2, W*2)
+    return h
+
+
+class DownBlock(ResnetBlock):
+  """Residual block where the returning shape is [B, C, H//2, W//2]"""
+  def __init__(self, in_channels, out_channels, time_channels, num_classes, num_groups=32, p_dropout=0.1):
+    super().__init__(in_channels, out_channels, time_channels, num_classes, num_groups, p_dropout)
+    self.downsample = nn.Conv2d(out_channels, out_channels, kernel_size=4, stride=2, padding=1)
+
+  def forward(self, x, time_embed, label):
+    B, C, H, W = x.shape
+    h = super().forward(x, time_embed, label)
+    h = self.downsample(h)
+    assert h.shape == (B, self.out_channels, H//2, W//2)
+    return h
 
 class ConditionalUNet(nn.Module):
   """
   Original U-Net architecture: https://arxiv.org/pdf/1505.04597.
   Modified to add conditional timestep and label on each block.
   """
-  def __init__(self, use_label=False, num_classes=None, use_attention=True):
+  def __init__(self, num_classes=1, out_channels=3, time_embedding_dim=128):
     super().__init__()
-    # 4 Down, 4 Up
-    self.channels = [64, 128, 256, 512, 1024]
-    self.time_embedding_dim = 128
-    self.use_label = use_label
-    # Only valid if use_label is true.
     self.num_classes = num_classes
+    # 4 Down, 4 Up.
+    self.channels = [64, 128, 256, 512, 1024]
+    # Convert C from 3 to 64. Keep same shape.
+    self.conv1 = nn.Conv2d(out_channels, self.channels[0], kernel_size=3, stride=1, padding=1)
+    # Convert C from 64 to 3. Keep same shape.
+    self.conv2 = nn.Conv2d(self.channels[0], out_channels, kernel_size=3, stride=1, padding=1)
+    # Zero initializing output conv layers can help learn the identity function better.
+    nn.init.zeros_(self.conv2.weight)
+    nn.init.zeros_(self.conv2.bias)
+
+    self.act = nn.ReLU()
+    self.norm = nn.GroupNorm(num_groups=32, num_channels=self.channels[0])
+
+    self.time_embed = SinusoidalPositionEmbeddings(dim=time_embedding_dim)
+    # Not sure why the time embedding dimension is 4x but the paper does this.
+    time_channels = out_channels*4
+    self.time_dense1 = nn.Linear(time_embedding_dim, time_channels)
+    self.time_dense2 = nn.Linear(time_channels, time_channels)
 
     self.down_blocks = []
     for i in range(4):
-      self.down_blocks.append(ConditionalUNetBlock(self.channels[i], self.channels[i+1], self.time_embedding_dim, downsize=True, use_label=self.use_label, num_classes=num_classes, use_attention=(use_attention and i==1)))
+      self.down_blocks.append(DownBlock(self.channels[i], self.channels[i+1], time_channels, num_classes))
     self.down_blocks = nn.ModuleList(self.down_blocks)
 
     self.up_blocks = []
+    channels_reversed = list(reversed(self.channels))
     for i in range(4):
-      channel_reversed = list(reversed(self.channels))
-      self.up_blocks.append(ConditionalUNetBlock(channel_reversed[i], channel_reversed[i+1], self.time_embedding_dim, downsize=False, use_label=self.use_label, num_classes=num_classes, use_attention=(use_attention and i==1)))
+      # C is doubled because input is h + x.
+      self.up_blocks.append(UpBlock(channels_reversed[i]*2, channels_reversed[i+1], time_channels, num_classes))
     self.up_blocks = nn.ModuleList(self.up_blocks)
 
-    image_channels = 3
-    self.conv1 = nn.Conv2d(image_channels, self.channels[0], kernel_size=3, stride=1, padding=1)
-    self.conv_output = nn.Conv2d(self.channels[0], image_channels, kernel_size=3, stride=1, padding=1)
+  def forward(self, x, timestep, label):
+    B, C, H, W = x.shape
 
-  def forward(self, x, t, label=None):
-    x = self.conv1(x)
+    assert timestep.shape == (B,)
+    assert label.shape == (B,)
+
+    # C channels to 64 channels.
+    h = self.conv1(x)
+
+    # Get time embed.
+    time_embed = self.time_dense1(self.time_embed(timestep))
+    time_embed = self.time_dense2(self.act(time_embed))
+
     residuals = []
     for down_block in self.down_blocks:
-      x = down_block(x, t, label)
-      residuals.append(x)
+      h = down_block(h, time_embed=time_embed, label=label)
+      residuals.append(h)
+
     for up_block, residual in zip(self.up_blocks, reversed(residuals)):
-      # Concat channels, double number of channels in the up block.
-      x = torch.cat([x, residual], dim=1)
-      x = up_block(x, t, label)
-    return self.conv_output(x)
+      h = torch.cat([h, residual], dim=1)
+      h = up_block(h, time_embed=time_embed, label=label)
+    
+    # Normalize and activate before conv2d.
+    h = self.act(self.norm(h))
+    return self.conv2(h)
