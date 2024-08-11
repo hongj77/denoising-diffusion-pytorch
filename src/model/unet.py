@@ -26,26 +26,27 @@ class SelfAttention(nn.Module):
     self.key_proj = nn.Conv2d(in_channels, key_dim, 1)
     # Keep the same number of channels as the image.
     self.value_proj = nn.Conv2d(in_channels, in_channels, 1)
+    self.key_dim = key_dim
+    self.norm = nn.GroupNorm(32, in_channels)
 
   def forward(self, x):
-    B, _, H, W = x.shape
+    B, C, H, W = x.shape
+
+    x = self.norm(x)
 
     # Shape: [B, N, key_dim]
     query = self.query_proj(x).reshape([B, H*W, -1])
-
     # Shape: [B, N, key_dim]
     key = self.key_proj(x).reshape([B, H*W, -1])
-
+    # Shape: [B, N, N]
+    attn = F.softmax((query @ key.permute(0,2,1)) * (self.key_dim)**-0.5, dim=-1)
     # Shape: [B, C, N]
     value = self.value_proj(x).reshape([B, -1, H*W])
-
-    # Shape: [B, N, N]
-    attn = F.softmax(query @ key.permute(0,2,1), dim=-1)
-
     # Shape: [B, C, N]
     out = value @ attn
     out = einops.rearrange(out, 'b c (h w) -> b c h w', h=H, w=W)
 
+    assert out.shape == x.shape
     return out + x
 
 class ResnetBlock(nn.Module):
@@ -144,12 +145,16 @@ class ConditionalUNet(nn.Module):
   """
   Original U-Net architecture: https://arxiv.org/pdf/1505.04597.
   Modified to add conditional timestep and label on each block.
+  Attention is applied at the 16x16 resolution and at the bottleneck.
   """
-  def __init__(self, num_classes=1, out_channels=3, time_embedding_dim=128):
+  def __init__(self, num_classes=1, out_channels=3, time_embedding_dim=128, use_attn=True):
     super().__init__()
     self.num_classes = num_classes
     # 4 Down, 4 Up.
     self.channels = [64, 128, 256, 512, 1024]
+    # Apply attention at the first downscaled resolution.
+    self.attn_index = 1
+    self.use_attn = use_attn
     # Convert C from 3 to 64. Keep same shape.
     self.conv1 = nn.Conv2d(out_channels, self.channels[0], kernel_size=3, stride=1, padding=1)
     # Convert C from 64 to 3. Keep same shape.
@@ -179,6 +184,16 @@ class ConditionalUNet(nn.Module):
       self.up_blocks.append(UpBlock(channels_reversed[i]*2, channels_reversed[i+1], time_channels, num_classes))
     self.up_blocks = nn.ModuleList(self.up_blocks)
 
+    self.mid_block1 = ResnetBlock(self.channels[-1],self.channels[-1], time_channels, num_classes)
+    self.mid_block2 = ResnetBlock(self.channels[-1],self.channels[-1], time_channels, num_classes)
+
+    # Attention at the 16x16 resolution.
+    self.down_attn = SelfAttention(self.channels[1], self.channels[1])
+    # Attention at the 16x16 resolution.
+    self.up_attn = SelfAttention(self.channels[1], self.channels[1])
+    # Attention at the bottleneck resolution.
+    self.mid_attn = SelfAttention(self.channels[-1], self.channels[-1])
+
   def forward(self, x, timestep, label):
     B, C, H, W = x.shape
 
@@ -193,13 +208,24 @@ class ConditionalUNet(nn.Module):
     time_embed = self.time_dense2(self.act(time_embed))
 
     residuals = []
-    for down_block in self.down_blocks:
+    for i, down_block in enumerate(self.down_blocks):
       h = down_block(h, time_embed=time_embed, label=label)
+      if self.use_attn and i == self.attn_index-1:
+        h = self.down_attn(h)
       residuals.append(h)
+    
+    # Apply attention at bottleneck layer.
+    if self.use_attn:
+      h = residuals[-1]
+      h = self.mid_block1(h, time_embed=time_embed, label=label)
+      h = self.mid_attn(h)
+      h = self.mid_block2(h, time_embed=time_embed, label=label)
 
-    for up_block, residual in zip(self.up_blocks, reversed(residuals)):
+    for i, (up_block, residual) in enumerate(zip(self.up_blocks, reversed(residuals))):
       h = torch.cat([h, residual], dim=1)
       h = up_block(h, time_embed=time_embed, label=label)
+      if self.use_attn and i == len(self.channels)-self.attn_index:
+        h = self.up_attn(h)
     
     # Normalize and activate before conv2d.
     h = self.act(self.norm(h))
