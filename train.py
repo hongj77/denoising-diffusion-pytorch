@@ -19,14 +19,14 @@ if __name__=="__main__":
   LEARNING_RATE = 2e-4
   NUM_TIMESTEPS = 1000
   NUM_CLASSES = 10
-  MAX_NUM_STEPS = 800000
-  SAVE_FREQ = 100000
+  MAX_NUM_STEPS = 1200000
+  SAVE_FREQ = 50000
   PRINT_FREQ = 1000
-  EVAL_FREQ = 100000
-  INFERENCE_BATCH_SIZE = 8
+  EVAL_FREQ = 5000
   IMAGE_SIZE = 32
   WARMUP_STEPS = 5000
   LOG_WANDB = False
+  CHECKPOINT_PATH = ""
 
   if LOG_WANDB:
     wandb.init(project="diffusion-pytorch")
@@ -41,14 +41,24 @@ if __name__=="__main__":
   train_dataloader = cifar_dataloader(BATCH_SIZE, train=True)
   eval_dataloader = cifar_dataloader(BATCH_SIZE, train=False)
 
+  if CHECKPOINT_PATH and accelerator.is_local_main_process:
+    print(f"Loading checkpoint {CHECKPOINT_PATH}")
+    loaded = torch.load(CHECKPOINT_PATH)
+    model.load_state_dict(loaded['model_state_dict'])
+    optimizer.load_state_dict(loaded['optimizer_state_dict'])
+    scheduler.load_state_dict(loaded['scheduler_state_dict'])
+    step = loaded['step']
+  else:
+    step = 0
+
 
   train_dataloader, eval_dataloader, model, optimizer, scheduler = accelerator.prepare(
     train_dataloader, eval_dataloader, model, optimizer, scheduler
   )
 
-  progress_bar = tqdm(range(MAX_NUM_STEPS))
+  print(f"Starting training from {step}")
+  progress_bar = tqdm(range(MAX_NUM_STEPS), initial=step)
 
-  step = 0
   losses = []
   while step < MAX_NUM_STEPS:
     for example in train_dataloader:
@@ -85,6 +95,7 @@ if __name__=="__main__":
         checkpoint = dict(
             model_state_dict = accelerator.unwrap_model(model).state_dict(),
             optimizer_state_dict = accelerator.unwrap_model(optimizer).state_dict(),
+            scheduler_state_dict = accelerator.unwrap_model(scheduler).state_dict() ,
             step = step
         )
         accelerator.save(checkpoint, output_dir)
@@ -111,8 +122,8 @@ if __name__=="__main__":
             if LOG_WANDB:
               wandb.log({"eval_loss": eval_loss}, step=step)
               # Visualize one example.
-              labels = torch.randint(0, NUM_CLASSES, [INFERENCE_BATCH_SIZE]).to(device)
-              samples = sample_images(model.eval(), num_steps=NUM_TIMESTEPS, batch_size=INFERENCE_BATCH_SIZE, img_size=IMAGE_SIZE, num_channels=3, label=labels, device=device)
+              labels = torch.arange(0, NUM_CLASSES).to(device)
+              samples = sample_images(model.eval(), num_steps=NUM_TIMESTEPS, batch_size=NUM_CLASSES, img_size=IMAGE_SIZE, num_channels=3, label=labels, device=device)
               # Log the last step of the denoising process.
               last_step_sample = samples[-1]
               samples = [postprocess(sample) for sample in last_step_sample]
