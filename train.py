@@ -30,7 +30,7 @@ if __name__=="__main__":
   CHECKPOINT_PATH = ""
 
   # Experiment variables.
-  USE_LABEL = True
+  USE_LABEL = False
   USE_ATTN = False
   ACTIVATION = 'relu'
   USE_PRE_ACTIVATION = True
@@ -49,14 +49,14 @@ if __name__=="__main__":
   name += "_{}".format(datetime.now().strftime("%Y%m%d_%S"))
   print("Starting: ", name)
 
-  if LOG_WANDB:
+  if LOG_WANDB and accelerator.is_local_main_process:
     wandb.init(project="diffusion-pytorch", name=name)
 
   accelerator = Accelerator()
   device = accelerator.device
   print(f"device: {device}")
 
-  model = ConditionalUNet(num_classes=NUM_CLASSES, use_attn=USE_ATTN).to(device)
+  model = ConditionalUNet(num_classes=NUM_CLASSES, use_label=USE_LABEL, use_attn=USE_ATTN).to(device)
   optimizer = Adam(model.parameters(), lr=LEARNING_RATE)
   scheduler = LinearLR(optimizer, start_factor=(1/WARMUP_STEPS), total_iters=WARMUP_STEPS)
   train_dataloader = cifar_dataloader(BATCH_SIZE, train=True)

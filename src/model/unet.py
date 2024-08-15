@@ -51,11 +51,12 @@ class SelfAttention(nn.Module):
 
 class ResnetBlock(nn.Module):
   """Resnet block with pre-activations from https://arxiv.org/pdf/1603.05027."""
-  def __init__(self, in_channels, out_channels, time_channels, num_classes, num_groups=32, p_dropout=0.1):
+  def __init__(self, in_channels, out_channels, time_channels, num_classes, num_groups=32, p_dropout=0.1, use_label=True):
     super().__init__()
     self.time_channels = time_channels
     self.out_channels = out_channels
     self.num_classes = num_classes
+    self.use_label = use_label
 
     self.norm1 = nn.GroupNorm(num_groups=num_groups, num_channels=in_channels)
     self.norm2 = nn.GroupNorm(num_groups=num_groups, num_channels=out_channels)
@@ -74,12 +75,13 @@ class ResnetBlock(nn.Module):
 
     self.time_dense = nn.Linear(time_channels, out_channels)
     
-    # I'm doing label embedding inside the resnet block unlike the time embedding
-    # because the label would benefit from directly projecting to `out_channels`
-    # which seems easier to do in this class vs. doing it in the unet.
-    self.label_dense1 = nn.Linear(num_classes, out_channels)
-    self.label_dense2 = nn.Linear(out_channels, out_channels)
-    self.label_dense3 = nn.Linear(out_channels, out_channels)
+    if use_label:
+      # I'm doing label embedding inside the resnet block unlike the time embedding
+      # because the label would benefit from directly projecting to `out_channels`
+      # which seems easier to do in this class vs. doing it in the unet.
+      self.label_dense1 = nn.Linear(num_classes, out_channels)
+      self.label_dense2 = nn.Linear(out_channels, out_channels)
+      self.label_dense3 = nn.Linear(out_channels, out_channels)
 
   def forward(self, x, time_embed, label):
     B = x.shape[0]
@@ -93,12 +95,13 @@ class ResnetBlock(nn.Module):
     # Add time as a condition.
     h += einops.rearrange(self.time_dense(self.act(time_embed)), 'b c -> b c 1 1')
 
-    # Add label as a condition.
-    label_one_hot = nn.functional.one_hot(label, self.num_classes).type(torch.float32)
-    label_embed = self.label_dense1(label_one_hot)
-    label_embed = self.label_dense2(self.act(label_embed))
-    label_embed = self.label_dense3(self.act(label_embed))
-    h += einops.rearrange(label_embed, 'b c -> b c 1 1')
+    if self.use_label:
+      # Add label as a condition.
+      label_one_hot = nn.functional.one_hot(label, self.num_classes).type(torch.float32)
+      label_embed = self.label_dense1(label_one_hot)
+      label_embed = self.label_dense2(self.act(label_embed))
+      label_embed = self.label_dense3(self.act(label_embed))
+      h += einops.rearrange(label_embed, 'b c -> b c 1 1')
 
     h = self.act(self.norm2(h))
     h = self.dropout(h)
@@ -113,8 +116,8 @@ class ResnetBlock(nn.Module):
 
 class UpBlock(ResnetBlock):
   """Residual block where the returning shape is [B, C, H*2, W*2]"""
-  def __init__(self, in_channels, out_channels, time_channels, num_classes, num_groups=32, p_dropout=0.1):
-    super().__init__(in_channels, out_channels, time_channels, num_classes, num_groups, p_dropout)
+  def __init__(self, in_channels, out_channels, time_channels, num_classes, num_groups=32, p_dropout=0.1, use_label=True):
+    super().__init__(in_channels, out_channels, time_channels, num_classes, num_groups, p_dropout, use_label)
     self.upsample = nn.Upsample(scale_factor=2, mode='nearest')
     self.conv = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
 
@@ -130,8 +133,8 @@ class UpBlock(ResnetBlock):
 
 class DownBlock(ResnetBlock):
   """Residual block where the returning shape is [B, C, H//2, W//2]"""
-  def __init__(self, in_channels, out_channels, time_channels, num_classes, num_groups=32, p_dropout=0.1):
-    super().__init__(in_channels, out_channels, time_channels, num_classes, num_groups, p_dropout)
+  def __init__(self, in_channels, out_channels, time_channels, num_classes, num_groups=32, p_dropout=0.1, use_label=True):
+    super().__init__(in_channels, out_channels, time_channels, num_classes, num_groups, p_dropout, use_label)
     self.downsample = nn.Conv2d(out_channels, out_channels, kernel_size=4, stride=2, padding=1)
 
   def forward(self, x, time_embed, label):
@@ -147,8 +150,9 @@ class ConditionalUNet(nn.Module):
   Modified to add conditional timestep and label on each block.
   Attention is applied at the 16x16 resolution and at the bottleneck.
   """
-  def __init__(self, num_classes=1, out_channels=3, time_embedding_dim=128, use_attn=True):
+  def __init__(self, num_classes=1, out_channels=3, time_embedding_dim=128, use_label=True, use_attn=True):
     super().__init__()
+    self.use_label = use_label
     self.num_classes = num_classes
     # 4 Down, 4 Up.
     self.channels = [64, 128, 256, 512, 1024]
@@ -174,18 +178,18 @@ class ConditionalUNet(nn.Module):
 
     self.down_blocks = []
     for i in range(4):
-      self.down_blocks.append(DownBlock(self.channels[i], self.channels[i+1], time_channels, num_classes))
+      self.down_blocks.append(DownBlock(self.channels[i], self.channels[i+1], time_channels, num_classes, use_label=use_label))
     self.down_blocks = nn.ModuleList(self.down_blocks)
 
     self.up_blocks = []
     channels_reversed = list(reversed(self.channels))
     for i in range(4):
       # C is doubled because input is h + x.
-      self.up_blocks.append(UpBlock(channels_reversed[i]*2, channels_reversed[i+1], time_channels, num_classes))
+      self.up_blocks.append(UpBlock(channels_reversed[i]*2, channels_reversed[i+1], time_channels, num_classes, use_label=use_label))
     self.up_blocks = nn.ModuleList(self.up_blocks)
 
-    self.mid_block1 = ResnetBlock(self.channels[-1],self.channels[-1], time_channels, num_classes)
-    self.mid_block2 = ResnetBlock(self.channels[-1],self.channels[-1], time_channels, num_classes)
+    self.mid_block1 = ResnetBlock(self.channels[-1],self.channels[-1], time_channels, num_classes, use_label=use_label)
+    self.mid_block2 = ResnetBlock(self.channels[-1],self.channels[-1], time_channels, num_classes, use_label=use_label)
 
     if use_attn:
       # Attention at the 16x16 resolution.
