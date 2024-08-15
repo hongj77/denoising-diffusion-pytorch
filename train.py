@@ -9,11 +9,12 @@ from src.model.unet import ConditionalUNet
 from src.diffusion_utils import linear_beta_schedule, sample_x_t, sample_images
 from src.data.transform_utils import postprocess
 from accelerate import Accelerator
+from datetime import datetime
+
 
 
 # TODO(hongj77): Write overfitting experiment trainer.
 if __name__=="__main__":
-  NAME = "full"
   SAVE_MODEL_PATH = "./checkpoints"
   BATCH_SIZE = 128
   LEARNING_RATE = 2e-4
@@ -28,14 +29,34 @@ if __name__=="__main__":
   LOG_WANDB = False
   CHECKPOINT_PATH = ""
 
+  # Experiment variables.
+  USE_LABEL = True
+  USE_ATTN = False
+  ACTIVATION = 'relu'
+  USE_PRE_ACTIVATION = True
+  USE_ZERO_INIT = True
+
+  name = "lr_{:.4f}_steps_{}_warmup_{}_label_{}_attn_{}_act_{}_preact_{}_zero".format(
+                                                          LEARNING_RATE,
+                                                          NUM_TIMESTEPS,
+                                                          WARMUP_STEPS,
+                                                          USE_LABEL,
+                                                          USE_ATTN,
+                                                          ACTIVATION,
+                                                          USE_PRE_ACTIVATION,
+                                                          USE_ZERO_INIT)
+
+  name += "_{}".format(datetime.now().strftime("%Y%m%d_%S"))
+  print("Starting: ", name)
+
   if LOG_WANDB:
-    wandb.init(project="diffusion-pytorch")
+    wandb.init(project="diffusion-pytorch", name=name)
 
   accelerator = Accelerator()
   device = accelerator.device
   print(f"device: {device}")
 
-  model = ConditionalUNet(num_classes=NUM_CLASSES).to(device)
+  model = ConditionalUNet(num_classes=NUM_CLASSES, use_attn=USE_ATTN).to(device)
   optimizer = Adam(model.parameters(), lr=LEARNING_RATE)
   scheduler = LinearLR(optimizer, start_factor=(1/WARMUP_STEPS), total_iters=WARMUP_STEPS)
   train_dataloader = cifar_dataloader(BATCH_SIZE, train=True)

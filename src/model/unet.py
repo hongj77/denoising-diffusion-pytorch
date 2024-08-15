@@ -187,12 +187,13 @@ class ConditionalUNet(nn.Module):
     self.mid_block1 = ResnetBlock(self.channels[-1],self.channels[-1], time_channels, num_classes)
     self.mid_block2 = ResnetBlock(self.channels[-1],self.channels[-1], time_channels, num_classes)
 
-    # Attention at the 16x16 resolution.
-    self.down_attn = SelfAttention(self.channels[1], self.channels[1])
-    # Attention at the 16x16 resolution.
-    self.up_attn = SelfAttention(self.channels[1], self.channels[1])
-    # Attention at the bottleneck resolution.
-    self.mid_attn = SelfAttention(self.channels[-1], self.channels[-1])
+    if use_attn:
+      # Attention at the 16x16 resolution.
+      self.down_attn = SelfAttention(self.channels[1], self.channels[1])
+      # Attention at the 16x16 resolution.
+      self.up_attn = SelfAttention(self.channels[1], self.channels[1])
+      # Attention at the bottleneck resolution.
+      self.mid_attn = SelfAttention(self.channels[-1], self.channels[-1])
 
   def forward(self, x, timestep, label):
     B, C, H, W = x.shape
