@@ -19,13 +19,13 @@ if __name__=="__main__":
   BATCH_SIZE = 128
   LEARNING_RATE = 2e-4
   NUM_TIMESTEPS = 1000
-  NUM_CLASSES = 10
-  MAX_NUM_STEPS = 1200000
+  NUM_CLASSES = 1
+  MAX_NUM_STEPS = 800000
   SAVE_FREQ = 50000
   PRINT_FREQ = 1000
   EVAL_FREQ = 5000
   IMAGE_SIZE = 32
-  WARMUP_STEPS = 5000
+  WARMUP_STEPS = 1000
   LOG_WANDB = False
   CHECKPOINT_PATH = ""
 
@@ -36,25 +36,17 @@ if __name__=="__main__":
   USE_PRE_ACTIVATION = True
   USE_ZERO_INIT = True
 
-  name = "lr_{:.4f}_steps_{}_warmup_{}_label_{}_attn_{}_act_{}_preact_{}_zero".format(
-                                                          LEARNING_RATE,
-                                                          NUM_TIMESTEPS,
-                                                          WARMUP_STEPS,
-                                                          USE_LABEL,
-                                                          USE_ATTN,
-                                                          ACTIVATION,
-                                                          USE_PRE_ACTIVATION,
-                                                          USE_ZERO_INIT)
+  accelerator = Accelerator()
+  device = accelerator.device
+  print(f"device: {device}")
+
+  name = f"classes_{NUM_CLASSES}_lr_{LEARNING_RATE:.4f}_timesteps_{NUM_TIMESTEPS}_warmup_{WARMUP_STEPS}_label_{USE_LABEL}_attn_{USE_ATTN}_act_{ACTIVATION}_preact_{USE_PRE_ACTIVATION}_zero"
 
   name += "_{}".format(datetime.now().strftime("%Y%m%d_%S"))
   print("Starting: ", name)
 
   if LOG_WANDB and accelerator.is_local_main_process:
     wandb.init(project="diffusion-pytorch", name=name)
-
-  accelerator = Accelerator()
-  device = accelerator.device
-  print(f"device: {device}")
 
   model = ConditionalUNet(num_classes=NUM_CLASSES, use_label=USE_LABEL, use_attn=USE_ATTN).to(device)
   optimizer = Adam(model.parameters(), lr=LEARNING_RATE)

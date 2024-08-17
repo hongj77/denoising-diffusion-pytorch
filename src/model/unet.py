@@ -84,7 +84,7 @@ class ResnetBlock(nn.Module):
       self.label_dense3 = nn.Linear(out_channels, out_channels)
 
   def forward(self, x, time_embed, label):
-    B = x.shape[0]
+    B, C, H, W = x.shape
     assert time_embed.shape == (B, self.time_channels)
     assert label.shape == (B,)
 
@@ -108,7 +108,10 @@ class ResnetBlock(nn.Module):
 
     # Second convolution.
     h = self.conv2(h)
-    x = self.conv_x(x)
+
+    if C != self.out_channels:
+      x = self.conv_x(x)
+
     assert h.shape == x.shape
 
     # Output value is a real number. Will need activation function at the beginning of next block.
