@@ -18,7 +18,7 @@ if __name__=="__main__":
   SAVE_MODEL_PATH = "./checkpoints"
   BATCH_SIZE = 128
   LEARNING_RATE = 2e-4
-  NUM_TIMESTEPS = 1000
+  NUM_TIMESTEPS = 4000
   NUM_CLASSES = 1
   MAX_NUM_STEPS = 800000
   SAVE_FREQ = 50000
@@ -26,8 +26,9 @@ if __name__=="__main__":
   EVAL_FREQ = 5000
   IMAGE_SIZE = 32
   WARMUP_STEPS = 1000
-  LOG_WANDB = False
+  LOG_WANDB = True
   CHECKPOINT_PATH = ""
+  NUM_INFERENCE_SAMPLES = 16
 
   # Experiment variables.
   USE_LABEL = False
@@ -40,13 +41,13 @@ if __name__=="__main__":
   device = accelerator.device
   print(f"device: {device}")
 
-  name = f"classes_{NUM_CLASSES}_lr_{LEARNING_RATE:.4f}_timesteps_{NUM_TIMESTEPS}_warmup_{WARMUP_STEPS}_label_{USE_LABEL}_attn_{USE_ATTN}_act_{ACTIVATION}_preact_{USE_PRE_ACTIVATION}_zero"
+  NAME = f"classes_{NUM_CLASSES}_lr_{LEARNING_RATE:.4f}_timesteps_{NUM_TIMESTEPS}_warmup_{WARMUP_STEPS}_label_{USE_LABEL}_attn_{USE_ATTN}_act_{ACTIVATION}_preact_{USE_PRE_ACTIVATION}_zero"
 
-  name += "_{}".format(datetime.now().strftime("%Y%m%d_%S"))
-  print("Starting: ", name)
+  NAME += "_{}".format(datetime.now().strftime("%Y%m%d_%S"))
+  print("Starting: ", NAME)
 
   if LOG_WANDB and accelerator.is_local_main_process:
-    wandb.init(project="diffusion-pytorch", name=name)
+    wandb.init(project="diffusion-pytorch", name=NAME)
 
   model = ConditionalUNet(num_classes=NUM_CLASSES, use_label=USE_LABEL, use_attn=USE_ATTN).to(device)
   optimizer = Adam(model.parameters(), lr=LEARNING_RATE)
@@ -103,7 +104,7 @@ if __name__=="__main__":
       progress_bar.update(1)
       step += 1
 
-      if step % SAVE_FREQ == 0:
+      if step % SAVE_FREQ == 0 or step == 1:
         output_dir = f'{SAVE_MODEL_PATH}/{NAME}_{step}_{BATCH_SIZE}_{NUM_TIMESTEPS}'
         checkpoint = dict(
             model_state_dict = accelerator.unwrap_model(model).state_dict(),
@@ -113,7 +114,7 @@ if __name__=="__main__":
         )
         accelerator.save(checkpoint, output_dir)
       
-      if step % EVAL_FREQ == 0:
+      if step % EVAL_FREQ == 0 or step == 1:
         with torch.no_grad():
           eval_losses = []
           for eval_example in tqdm(eval_dataloader):
@@ -133,10 +134,11 @@ if __name__=="__main__":
             eval_loss = np.mean(eval_losses)
             print(f"eval_loss: {eval_loss}")
             if LOG_WANDB:
-              wandb.log({"eval_loss": eval_loss}, step=step)
+
               # Visualize one example.
-              labels = torch.arange(0, NUM_CLASSES).to(device)
-              samples = sample_images(model.eval(), num_steps=NUM_TIMESTEPS, batch_size=NUM_CLASSES, img_size=IMAGE_SIZE, num_channels=3, label=labels, device=device)
+              labels = torch.randn([NUM_INFERENCE_SAMPLES]).to(device)
+              print(f"labels.shape: {labels.shape}")
+              samples = sample_images(model.eval(), num_steps=NUM_TIMESTEPS, batch_size=NUM_INFERENCE_SAMPLES, img_size=IMAGE_SIZE, num_channels=3, label=labels, device=device)
               # Log the last step of the denoising process.
               last_step_sample = samples[-1]
               samples = [postprocess(sample) for sample in last_step_sample]
