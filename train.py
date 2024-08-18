@@ -19,7 +19,7 @@ if __name__=="__main__":
   BATCH_SIZE = 128
   LEARNING_RATE = 2e-4
   NUM_TIMESTEPS = 1000
-  NUM_CLASSES = 1
+  NUM_CLASSES = 10
   MAX_NUM_STEPS = 800000
   SAVE_FREQ = 50000
   PRINT_FREQ = 1000
@@ -28,10 +28,9 @@ if __name__=="__main__":
   WARMUP_STEPS = 1000
   LOG_WANDB = True
   CHECKPOINT_PATH = ""
-  NUM_INFERENCE_SAMPLES = 16
 
   # Experiment variables.
-  USE_LABEL = False
+  USE_LABEL = True
   USE_ATTN = True
   ACTIVATION = 'relu'
   DROPOUT = 0.5
@@ -135,9 +134,9 @@ if __name__=="__main__":
             print(f"eval_loss: {eval_loss}")
             if LOG_WANDB:
               wandb.log({"eval_loss": eval_loss})
-              labels = torch.randn([NUM_INFERENCE_SAMPLES]).to(device)
+              labels = torch.arange(0, NUM_CLASSES).to(device)
               print(f"labels.shape: {labels.shape}")
-              samples = sample_images(model.eval(), num_steps=NUM_TIMESTEPS, batch_size=NUM_INFERENCE_SAMPLES, img_size=IMAGE_SIZE, num_channels=3, label=labels, device=device)
+              samples = sample_images(model.eval(), num_steps=NUM_TIMESTEPS, batch_size=NUM_CLASSES, img_size=IMAGE_SIZE, num_channels=3, label=labels, device=device)
               # Log the last step of the denoising process.
               last_step_sample = samples[-1]
               samples = [postprocess(sample) for sample in last_step_sample]
