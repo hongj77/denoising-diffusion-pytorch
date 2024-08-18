@@ -18,15 +18,15 @@ if __name__=="__main__":
   SAVE_MODEL_PATH = "./checkpoints"
   BATCH_SIZE = 128
   LEARNING_RATE = 2e-4
-  NUM_TIMESTEPS = 4000
+  NUM_TIMESTEPS = 1000
   NUM_CLASSES = 1
-  MAX_NUM_STEPS = 800000
+  MAX_NUM_STEPS = 300000
   SAVE_FREQ = 50000
   PRINT_FREQ = 1000
   EVAL_FREQ = 5000
   IMAGE_SIZE = 32
   WARMUP_STEPS = 1000
-  LOG_WANDB = True
+  LOG_WANDB = False
   CHECKPOINT_PATH = ""
   NUM_INFERENCE_SAMPLES = 16
 
@@ -34,6 +34,7 @@ if __name__=="__main__":
   USE_LABEL = False
   USE_ATTN = False
   ACTIVATION = 'relu'
+  DROPOUT = 0.5
   USE_PRE_ACTIVATION = True
   USE_ZERO_INIT = True
 
@@ -41,15 +42,14 @@ if __name__=="__main__":
   device = accelerator.device
   print(f"device: {device}")
 
-  NAME = f"classes_{NUM_CLASSES}_lr_{LEARNING_RATE:.4f}_timesteps_{NUM_TIMESTEPS}_warmup_{WARMUP_STEPS}_label_{USE_LABEL}_attn_{USE_ATTN}_act_{ACTIVATION}_preact_{USE_PRE_ACTIVATION}_zero"
-
+  NAME = f"dropout_{DROPOUT}_classes_{NUM_CLASSES}_lr_{LEARNING_RATE:.4f}_timesteps_{NUM_TIMESTEPS}_warmup_{WARMUP_STEPS}_label_{USE_LABEL}_attn_{USE_ATTN}_act_{ACTIVATION}_preact_{USE_PRE_ACTIVATION}_zero"
   NAME += "_{}".format(datetime.now().strftime("%Y%m%d_%S"))
   print("Starting: ", NAME)
 
   if LOG_WANDB and accelerator.is_local_main_process:
     wandb.init(project="diffusion-pytorch", name=NAME)
 
-  model = ConditionalUNet(num_classes=NUM_CLASSES, use_label=USE_LABEL, use_attn=USE_ATTN).to(device)
+  model = ConditionalUNet(num_classes=NUM_CLASSES, use_label=USE_LABEL, use_attn=USE_ATTN, p_dropout=DROPOUT).to(device)
   optimizer = Adam(model.parameters(), lr=LEARNING_RATE)
   scheduler = LinearLR(optimizer, start_factor=(1/WARMUP_STEPS), total_iters=WARMUP_STEPS)
   train_dataloader = cifar_dataloader(BATCH_SIZE, train=True)
@@ -134,8 +134,6 @@ if __name__=="__main__":
             eval_loss = np.mean(eval_losses)
             print(f"eval_loss: {eval_loss}")
             if LOG_WANDB:
-
-              # Visualize one example.
               labels = torch.randn([NUM_INFERENCE_SAMPLES]).to(device)
               print(f"labels.shape: {labels.shape}")
               samples = sample_images(model.eval(), num_steps=NUM_TIMESTEPS, batch_size=NUM_INFERENCE_SAMPLES, img_size=IMAGE_SIZE, num_channels=3, label=labels, device=device)

@@ -153,7 +153,7 @@ class ConditionalUNet(nn.Module):
   Modified to add conditional timestep and label on each block.
   Attention is applied at the 16x16 resolution and at the bottleneck.
   """
-  def __init__(self, num_classes=1, out_channels=3, time_embedding_dim=128, use_label=True, use_attn=True):
+  def __init__(self, num_classes=1, out_channels=3, time_embedding_dim=128, use_label=True, use_attn=True, p_dropout=0.1):
     super().__init__()
     self.use_label = use_label
     self.num_classes = num_classes
@@ -181,18 +181,18 @@ class ConditionalUNet(nn.Module):
 
     self.down_blocks = []
     for i in range(4):
-      self.down_blocks.append(DownBlock(self.channels[i], self.channels[i+1], time_channels, num_classes, use_label=use_label))
+      self.down_blocks.append(DownBlock(self.channels[i], self.channels[i+1], time_channels, num_classes, use_label=use_label, p_dropout=p_dropout))
     self.down_blocks = nn.ModuleList(self.down_blocks)
 
     self.up_blocks = []
     channels_reversed = list(reversed(self.channels))
     for i in range(4):
       # C is doubled because input is h + x.
-      self.up_blocks.append(UpBlock(channels_reversed[i]*2, channels_reversed[i+1], time_channels, num_classes, use_label=use_label))
+      self.up_blocks.append(UpBlock(channels_reversed[i]*2, channels_reversed[i+1], time_channels, num_classes, use_label=use_label, p_dropout=p_dropout))
     self.up_blocks = nn.ModuleList(self.up_blocks)
 
-    self.mid_block1 = ResnetBlock(self.channels[-1],self.channels[-1], time_channels, num_classes, use_label=use_label)
-    self.mid_block2 = ResnetBlock(self.channels[-1],self.channels[-1], time_channels, num_classes, use_label=use_label)
+    self.mid_block1 = ResnetBlock(self.channels[-1],self.channels[-1], time_channels, num_classes, use_label=use_label, p_dropout=p_dropout)
+    self.mid_block2 = ResnetBlock(self.channels[-1],self.channels[-1], time_channels, num_classes, use_label=use_label, p_dropout=p_dropout)
 
     if use_attn:
       # Attention at the 16x16 resolution.
