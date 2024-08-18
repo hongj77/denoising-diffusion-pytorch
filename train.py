@@ -20,19 +20,19 @@ if __name__=="__main__":
   LEARNING_RATE = 2e-4
   NUM_TIMESTEPS = 1000
   NUM_CLASSES = 1
-  MAX_NUM_STEPS = 300000
+  MAX_NUM_STEPS = 800000
   SAVE_FREQ = 50000
   PRINT_FREQ = 1000
   EVAL_FREQ = 5000
   IMAGE_SIZE = 32
   WARMUP_STEPS = 1000
-  LOG_WANDB = False
+  LOG_WANDB = True
   CHECKPOINT_PATH = ""
   NUM_INFERENCE_SAMPLES = 16
 
   # Experiment variables.
   USE_LABEL = False
-  USE_ATTN = False
+  USE_ATTN = True
   ACTIVATION = 'relu'
   DROPOUT = 0.5
   USE_PRE_ACTIVATION = True
@@ -134,6 +134,7 @@ if __name__=="__main__":
             eval_loss = np.mean(eval_losses)
             print(f"eval_loss: {eval_loss}")
             if LOG_WANDB:
+              wandb.log({"eval_loss": eval_loss})
               labels = torch.randn([NUM_INFERENCE_SAMPLES]).to(device)
               print(f"labels.shape: {labels.shape}")
               samples = sample_images(model.eval(), num_steps=NUM_TIMESTEPS, batch_size=NUM_INFERENCE_SAMPLES, img_size=IMAGE_SIZE, num_channels=3, label=labels, device=device)
