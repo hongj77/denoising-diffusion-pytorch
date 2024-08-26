@@ -1,5 +1,5 @@
 # Denoising Diffusion Pytorch
-Implementation of DDPM in Pytorch.
+Implementation of DDPM in Pytorch. https://arxiv.org/abs/2006.11239.
 
 ![](examples/dropout_0.5_classes_10_lr_0.0002_timesteps_1000_warmup_1000_label_True_attn_True_act_relu_preact_True_zero_20240819_49_800000_128_1000.png)
 
