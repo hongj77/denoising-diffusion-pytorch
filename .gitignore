@@ -8,3 +8,6 @@ wandb
 *.bin
 *.pkl
 checkpoints/*
+samples/*
+samples.*
+samples_no_label
