@@ -1,5 +1,10 @@
 # Denoising Diffusion Pytorch
-Implementation of DDPM in Pytorch. https://arxiv.org/abs/2006.11239.
+Implementation of DDPM (https://arxiv.org/abs/2006.11239) in Pytorch with class conditioning.
+
+Model architecture:
+- Class conditioned on label.
+- UNet with 4 downsample, 4 upsample blocks. Self-attention at the 16x16 resolution and bottleneck layer.
+- Pre-activation for all resnet blocks.
 
 <img src="examples/dropout_0.1_classes_10_lr_0.0002_timesteps_4000_warmup_5000_label_True_attn_True_act_relu_preact_True_zero_20240826_59_1200000_128_4000.png" width="800">
 
